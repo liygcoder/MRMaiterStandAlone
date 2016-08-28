@@ -1,0 +1,102 @@
+package app;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Vector;
+
+import core.MaiterAPI;
+import core.MaiterApplication;
+
+
+import data.Bucket;
+import data.Pair;
+
+
+/*
+数据的读取	
+数据的输入格式： key;master;mirror mirror ;length;nei nei 
+*/
+
+
+public class Pagerank extends MaiterAPI<Integer,Double,Double,Integer> {
+   //extends MaiterAPI
+	//数据的读取及初始化
+   public void readData(String line,Bucket<Integer,Double,Double,Integer> bk){
+		String arrays[] = line.split(";");
+		bk.setKey(Integer.parseInt(arrays[0]));
+		bk.setMaster(Integer.parseInt(arrays[1])+1);//	纠结 目前master跟workerid保持一直 1workerNum
+		String s_mirrors[]=arrays[2].split(" ");
+		for(String mirror:s_mirrors){
+			bk.getMirrors().add(Integer.parseInt(mirror));
+		}
+		bk.setLength(Integer.parseInt(arrays[3]));
+		String s_links[]=arrays[4].split(" ");
+		for(String link:s_links){
+			bk.getLinks().add(Integer.parseInt(link));
+		}
+	}
+	
+   public Double initDelta(Integer k){
+		double delta=0.2;
+		return delta;
+	}
+   public Double initValue(Integer k){
+		double value = 0;
+		return value;
+	}
+   public Double priority(Double value, Double delta){
+		double pri= delta;
+		return pri;
+	}
+	public Double default_v(){
+		double defaultValue = 0;
+		return defaultValue;
+	}
+	//数据的操作
+	public Double accumulate(Double a, Double b){
+		a+=b;
+		return a;
+	}
+
+	public void g_func(Integer k,Double delta,Double value,ArrayList<Integer> links,int length,ArrayList<Pair<Integer,Double>> outlink){
+		double outv = delta/length *0.8;
+		Iterator<Integer> iter =links.iterator();
+		while(iter.hasNext()){
+			int id =iter.next();
+			outlink.add(new Pair<Integer,Double>(id,outv));
+		}
+	} 
+	public Double counteract(Double a, Double b){//副本顶点之间消息的同步的正确 抵消操作对应累积操作
+		return a-b;
+	}
+	public boolean isGreater(Double a,Double b){
+		return a>b?true:false;
+	}
+	public Double abs(Double a,Double b){//求绝对值，用于比较当前的计算总和的变化量
+		return Math.abs(a-b);
+	}
+	public Double getThreshold(){
+		Double threshold=(double) 1000;
+		return threshold;
+	}
+    public static void startMaiter(){
+        //实例化相关对象
+    	//System.out.println("Pagerank");
+    	MaiterApplication<Integer,Double,Double,Integer> application=new MaiterApplication<Integer,Double,Double,Integer>();
+    	application.maiterRun();
+    }
+}
+
+
+
+
+
+

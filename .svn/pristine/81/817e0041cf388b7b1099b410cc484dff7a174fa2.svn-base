@@ -1,0 +1,18 @@
+package util;
+//用于开启任务执行
+public class TaskStart{
+	 private boolean start[] = {false,false,false};
+	 int kernel;
+	 public synchronized void  synchronous(int kernel_,int id) throws InterruptedException{
+		 kernel=kernel_-1;
+		 if(0==id){
+		    start[kernel]=true;
+			notifyAll();
+		}
+		else{
+			if(!start[kernel]){//当前work1的read还没有完成
+				wait();
+			}
+		}
+	}
+}

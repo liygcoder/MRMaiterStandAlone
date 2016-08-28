@@ -1,0 +1,58 @@
+package data;
+
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+
+/*
+ * DeltaTable
+ */
+public class DeltaTable<K, D> extends Table implements PTypeTable<K, D> {
+
+	// 变量
+	private HashMap<K, Pair<K, D>> deltaTable;
+	SequenceIterator sequIterator;
+	// 方法
+	DeltaTable(D defaultvalue) {//构造方法
+		sequIterator = new SequenceIterator(defaultvalue);
+	}
+    public Pair<K, D> get(K key){
+    	return deltaTable.get(key);
+    }
+	public void put(K key, Pair<K, D> pair) {
+		deltaTable.put(key, pair);
+	}
+	public void clear() {
+		deltaTable.clear();
+	}
+
+	public SequenceIterator getSequenceIterator() {
+		return sequIterator;
+	}
+	//遍历
+	class SequenceIterator extends PBaseIterator<K,D> {
+		Iterator iter;
+		D defaultValue;
+		//方法
+		SequenceIterator(D defaultvalue) {
+			iter = deltaTable.entrySet().iterator();
+			defaultValue =defaultvalue;
+		}
+        
+		public boolean hasNext() {
+			return iter.hasNext();
+		}
+
+		public Pair<K,D> next() {
+			boolean isHasNext = false;
+			while (iter.hasNext()) {
+				Map.Entry entry = (Map.Entry) iter.next();
+				Pair<K,D> pair = (Pair<K,D>) entry.getValue();
+				if (!pair.getDelta().equals(0)) {
+					return pair;
+				}// 过滤掉delta=0的顶点
+			}
+			return null;
+		}
+	}
+}

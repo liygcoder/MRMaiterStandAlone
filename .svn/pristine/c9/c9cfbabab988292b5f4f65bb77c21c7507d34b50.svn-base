@@ -1,0 +1,291 @@
+package core;
+
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Random;
+import java.util.Scanner;
+import java.util.Vector;
+
+
+import data.BaseIterator;
+import data.Bucket;
+import data.DataStructure;
+import data.DeltaTable;
+import data.PBaseIterator;
+import data.Pair;
+import data.StateTable;
+
+//实现Maiter的核心操作
+public class MaiterKernel<K, V, D, E> {
+	/*
+	 * 变量的定义
+	 */
+	int workerNum;
+	int workerId;
+	MaiterAPI<K, V, D, E> api;
+	ArrayList<DataStructure<K,V,D,E>> globalData;
+	DataStructure<K, V, D, E> data;
+	D aggregation_last;// 记录所有顶点上次迭代后结果的总和
+	StateTable<K, V, D, E> table;
+	/*
+	 * 方法的定义
+	 */
+	public MaiterKernel(MaiterAPI<K, V, D, E> api,ArrayList<DataStructure<K,V,D,E>> globalData,int workerId) {
+		this.globalData=globalData;
+		data=globalData.get(workerId-1);
+		this.api = api;
+		workerNum = data.getWorkerNum();// worker的数量
+		this.workerId = workerId;
+		table = data.getStateTable();
+		aggregation_last=api.default_v();
+	}
+
+	boolean readDataKernel(String inputPath) {
+		try {
+			FileReader in = new FileReader(inputPath);
+			BufferedReader reader = new BufferedReader(in);
+			String line;
+			Bucket<K, V, D, E> bk = new Bucket<K, V, D, E>();
+			while ((line = reader.readLine()) != null) {
+				api.readData(line, bk);
+				if (bk.getMaster() == workerId) {// 只对master顶点赋初值
+					bk.setDelta(api.initDelta(bk.getKey()));
+				} else { // 对mirror顶点赋默认值
+					bk.setDelta(api.default_v());
+				}
+				bk.setValue(api.initValue(bk.getKey()));
+				bk.setPriority(api.priority(bk.getValue(), bk.getDelta()));
+				table.put(bk.getKey(), bk);
+			}
+			reader.close();
+			in.close();
+		} catch (IOException e) {
+			System.out.println(e);
+			return false;
+		}
+		return true;
+	}
+
+	/*
+	 * kernel2 迭代计算
+	 */
+	void runLoop(double partion) {
+		// System.out.println("采用静态级调度");
+		sendMessage();//发送消息
+		receiveMessage();//接收消息
+		D defaultV = api.default_v();
+		K key;D delta;V value;
+		BaseIterator<K, V, D, E> iter;
+		if (partion < 1) {// 执行优先级计算
+			iter = data.getStateTable().getScheduledIterator(partion);
+		} else {//
+			iter = data.getStateTable().getSequenceIterator();
+		}
+		Bucket<K, V, D, E> bk;
+		ArrayList<Pair<K, D>> outLink = new ArrayList<Pair<K, D>>();
+		ArrayList<Pair<Integer, D>> outMirrors = new ArrayList<Pair<Integer, D>>();
+		while (iter.hasNext()) {
+			bk = iter.next();
+			if (bk == null)
+				break;
+			outLink.clear();
+			outMirrors.clear();
+			key=bk.getKey();value=bk.getValue();delta=bk.getDelta();
+			if (bk.getMaster() == workerId) {// 只对master顶点执行累积更新value
+				//1更新value
+				value = (V) api.accumulate((D)value, delta);
+				bk.setValue(value);
+				//2 由于优化了和缓存了master向mirror发送消息，所以master在此时要向其mirrors发送消息
+				Iterator<Integer> iterM = bk.getMirrors().iterator();
+				while (iterM.hasNext()) {
+					int id = iterM.next();
+					D deltaM=api.counteract(delta,bk.getOffset().get(key));
+				    outMirrors.add(new Pair<Integer, D>(id, deltaM));
+					accumlateDeltaIn(outMirrors,key);
+				}
+				bk.getOffset().clear();//清空Offset
+			}
+			//3计算 delta传递给本地的邻居顶点的值
+			api.g_func(key,delta, bk.getValue(),bk.getLinks(), bk.getLength(), outLink);
+
+			//4更新delta、priority
+			bk.setDelta(defaultV);// 更新delta
+			delta=bk.getDelta();
+			bk.setPriority(api.priority(value, delta));// 更新priority
+
+			//5 对2、3中计算结果进行传递 应用
+			accumlateDelta(outLink,true,-1);
+		}
+	}
+	void accumlateDeltaIn(ArrayList<Pair<Integer, D>> outMirrors,K key) {//5. 顶点内部副本顶点的消息同步 累积
+		Iterator<Pair<Integer,D>> iter = outMirrors.iterator();
+		Pair<Integer,D> pair;
+		Pair<K,D> pair2;
+		D delta;
+		while (iter.hasNext()) {
+			pair = iter.next();
+			DeltaTable<K,D> deltaTable=(DeltaTable<K,D>)data.getDeltaTable(pair.getKey());
+			pair2=deltaTable.get(key);
+			delta=api.accumulate(pair.getDelta(),pair2.getDelta());
+			pair.setDelta(delta);
+		}	
+	}
+	void accumlateDelta(ArrayList<Pair<K, D>> outLink,boolean isLocalMessage,int workerid) {//5. 顶点之间的消息传递 累积
+		// TODO 将当前顶点的值传递出去，首先更新本地的buckets_。
+		// 然后如果是master，则向mirrors发送消息；如果不是master顶点，则向其对应的master顶点发送消息
+		Pair<K,D> pair;
+		Bucket<K,V,D,E> bk;
+		Iterator<Pair<K,D>> iter = outLink.iterator();
+		while (iter.hasNext()) {
+			pair = iter.next();
+			K key=pair.getKey();
+			// 第一步：更新本地的delta
+			bk=table.get(key);//获取目的顶点
+			D delta=api.accumulate(pair.getDelta(),bk.getDelta());
+			bk.setDelta(delta);//更新delta
+			// 第二步，如果是mirror顶点的更新
+			if(workerId==bk.getMaster()){
+				if(!isLocalMessage){//是master顶点且是远程消息,则更新offset
+					HashMap<Integer, D> offset=bk.getOffset();
+					if(offset.containsKey(workerid)){
+						offset.put(workerid,api.default_v());
+					}
+					delta=api.accumulate(pair.getDelta(),offset.get(workerid));
+					offset.put(workerid, delta);
+				}
+			}else{
+				if(isLocalMessage){//mirror顶点且是本地消息 则将消息发送给master顶点
+					DeltaTable<K,D> deltaTable=(DeltaTable<K,D>)data.getDeltaTable(bk.getMaster());
+					pair=deltaTable.get(bk.getKey());
+					delta=api.accumulate(pair.getDelta(),bk.getDelta());
+					pair.setDelta(delta);
+				}
+			}
+		}
+	}
+	private void receiveMessage() {//pair->bucket
+		// TODO 不同线程会有冲突 远程写和本地读 消息队列
+		StateTable<K,V,D,E> stateTable=data.getStateTable();
+		for(int i=0;i!=workerNum;++i){
+			if(i==workerId-1)break;
+			int sender=i;
+			DeltaTable<K,D> message=data.getReceiveTable(sender);
+			PBaseIterator<K,D> iter=message.getSequenceIterator();
+			Pair<K,D> pair;
+			Bucket<K,V,D,E> bk;
+			while(iter.hasNext()){
+				pair=iter.next();
+				K key=pair.getKey();
+				D delta=pair.getDelta();
+				bk=stateTable.get(key);//需添加错误检查 
+				delta=api.accumulate(delta, bk.getDelta());
+				bk.setDelta(delta);
+			}
+			message.clear();
+		}
+	}
+	private void sendMessage() {//pair->pair
+		// TODO 将消息队列更新到对应的worker的接收消息的队列中 没有冲突
+		for(int i=0;i!=workerNum;++i){
+			if(i==workerId-1)break;
+			DeltaTable<K,D> sender=data.getDeltaTable(i);
+			DeltaTable<K,D> receiver=globalData.get(i).getReceiveTable(workerId-1);
+			PBaseIterator<K,D> iter=sender.getSequenceIterator();
+			Pair<K,D> spair;
+			Pair<K,D> rpair;
+			while(iter.hasNext()){
+				spair=iter.next();
+				K key=spair.getKey();
+				D delta=spair.getDelta();
+				rpair=receiver.get(key);
+				if(rpair==null){//不存在，则创建
+					Pair<K,D> newp=new Pair<K,D>(key,api.default_v());
+					receiver.put(key, newp);
+				}
+			    delta=api.accumulate(delta, rpair.getDelta());
+			    rpair.setDelta(delta);
+			}
+			sender.clear();
+		}
+	}
+	
+	/*
+	 * 终止检测
+	 */
+	// worker收集本地各个顶点的value值 读本地数据
+	D estimate_prog() {
+		Bucket<K,V,D,E> bk;
+		// 数据的收集
+		BaseIterator<K,V,D,E> iter = data.getStateTable().getEntirePassIterator();
+		D aggregation_curr = api.default_v();
+		while (iter.hasNext()) {
+			bk = iter.next();
+			if (bk.getMaster() == workerId){aggregation_curr = api.accumulate(aggregation_curr, (D)bk.getValue());}// 只把master顶点的value进行收集		
+		}
+		return aggregation_curr;
+	}
+
+	// master进行终止判断 读消息数据
+	boolean terminate(D threshold, D aggregation_curr) {
+		boolean finished = false;
+		D change=api.abs(aggregation_curr,aggregation_last);
+		if (api.isGreater(threshold, change) ) {
+			finished = true;
+		}
+		System.out.println("curr:" + aggregation_curr + "  last:"
+				+ aggregation_last + " 差值:"
+				+ change);
+		aggregation_last = aggregation_curr;
+		return finished;
+	}
+
+	/*
+	 * kernel3 结果写到file中
+	 */
+	public boolean writeResultKernel(String outputPath) {
+		// TODO Auto-generated method stub
+		try {
+			FileWriter out = new FileWriter(outputPath);
+			BufferedWriter writer = new BufferedWriter(out);
+			BaseIterator<K,V,D,E> iter = data.getStateTable().getEntirePassIterator();
+			Bucket<K,V,D,E> bk;
+			String line;
+			while (iter.hasNext()) {
+				bk = iter.next();
+				line = bk.getKey() + "  " + bk.getValue()+"\n";
+				writer.write(line);
+				//writer.newLine();
+			}
+			writer.close();
+			out.close();
+		} catch (IOException e) {
+			System.out.println(e);
+			return false;
+		}
+		return true;
+	}
+
+	/*
+	 * for test
+	 */
+	// for test show the data of the buckets_
+//	void showBuckets() {
+//		Collection<Bucket> coll = data.buckets_.values();
+//		Iterator<Bucket> iter = coll.iterator();
+//		while (iter.hasNext()) {
+//			Bucket buck = iter.next();
+//			System.out.println("workerId=" + workerId + "; key=" + buck.key
+//					+ "; delta=" + buck.delta + "; value=" + buck.value
+//					+ "; pri=" + buck.priority + "; links=" + buck.links + "-"
+//					+ buck.links.size() + "; length=" + buck.length
+//					+ "; mirrors=" + buck.mirrors + "-" + buck.mirrors.size());
+//		}
+//	}
+}

@@ -1,0 +1,34 @@
+package core;
+
+import java.io.FileReader;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Vector;
+
+import data.Bucket;
+import data.Pair;
+
+
+
+//import DataStructure;
+public abstract class MaiterAPI<K,V,D,E> {
+    //为了使用Maiter，定义一些必须实现的操作 API
+   
+	//数据的读取
+	public abstract void readData(String line,Bucket<K,V,D,E> bk);//return key
+	public abstract D initDelta(K k);// return delta
+	public abstract V initValue(K k);// return value
+	public abstract D priority(V value, D delta);// return priority
+	public abstract D default_v();// return default_v
+	//数据的操作
+	public abstract D accumulate(D a, D b);//.e.g,return a=a+b
+    //V process_delta_v( K k, V delta,V value, D data){return delta;}//simrank会用到
+	public abstract void g_func(K k,D delta,V value,ArrayList<E> links,int length,ArrayList<Pair<K,D>> outlink);//本地邻居顶点的更新
+	public abstract D counteract(D a, D b);//副本顶点之间消息的同步
+	//abstract void g_func(D delta,D offset,ArrayList<Integer> mirrors,ArrayList<Pair<Integer,D>> outMirrors);//副本顶点之间的同步
+	public abstract boolean isGreater(D d, D value);
+	public abstract D abs(D d, D value);
+	public abstract D getThreshold();
+}
+
+

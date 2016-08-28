@@ -1,0 +1,167 @@
+package data;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+
+import core.MaiterAPI;
+
+
+/*
+ * StateTable
+ */
+public class StateTable<K, V, D, E> extends Table implements TypeTable<K, V, D, E> {
+	// 变量
+	private HashMap<K, Bucket<K, V, D, E>> dataTable;
+	private SequenceIterator sequIterator;
+	private ScheduledIterator scheIterator;
+	private EntirePassIterator entiIterator;
+	private int sampleLowerBound;//partion=sampleLowerBound/sampleSize    sampleLowerBound默认值10
+	private MaiterAPI<K,V,D,E> api;
+	private double partion;
+	// 方法
+	StateTable(int samplelowerbound,MaiterAPI<K,V,D,E> api) {// 构造函数
+		dataTable = new HashMap<K, Bucket<K, V, D, E>>();
+		sampleLowerBound=samplelowerbound;
+		this.api=api;
+	}  
+    
+	public void put(K key, Bucket<K, V, D, E> bk) {// 添加元素
+		dataTable.put(bk.getKey(), bk);
+	}
+    public Bucket<K, V, D, E> get(K key){
+    	return dataTable.get(key);
+    }
+	public BaseIterator<K, V, D, E> getSequenceIterator() {
+		sequIterator = new SequenceIterator();
+		System.out.println("采用顺序执行方式");
+		return sequIterator;
+	}
+
+	public BaseIterator<K, V, D, E> getScheduledIterator(double partion) {
+		System.out.println("采用优先级调度方式");
+		scheIterator = new ScheduledIterator();
+		return scheIterator;
+	}
+	public BaseIterator<K, V, D, E> getEntirePassIterator() {
+		entiIterator =new EntirePassIterator();
+		return entiIterator;
+	}
+
+	class SequenceIterator extends BaseIterator<K, V, D, E> {
+		Iterator iter;
+		SequenceIterator() {
+			iter = dataTable.entrySet().iterator();
+		}
+		public boolean hasNext() {
+			return iter.hasNext();
+		}
+		public Bucket<K, V, D, E> next() {
+			boolean isHasNext = false;
+			while (iter.hasNext()) {
+				Map.Entry entry = (Map.Entry) iter.next();
+				Bucket<K, V, D, E> bk = (Bucket<K, V, D, E>) entry.getValue();
+				if (!bk.getDelta().equals(0)) {// 过滤掉delta=0的顶点
+					return bk;
+				}
+			}
+			return null;
+		}
+	}
+
+	class EntirePassIterator extends BaseIterator<K, V, D, E> {
+		Iterator iter;
+		EntirePassIterator() {
+			iter = dataTable.entrySet().iterator();
+		}
+		public boolean hasNext() {
+			return iter.hasNext();
+		}
+		public Bucket<K, V, D, E> next() {
+			Map.Entry entry = (Map.Entry) iter.next();
+			Bucket<K, V, D, E>  bk = (Bucket<K, V, D, E> ) entry.getValue();
+			return bk;
+		}
+	}
+	
+	class ScheduledIterator extends BaseIterator<K, V, D, E> {
+		// 变量定义
+		double partion;
+		//int sampleLowerBound;
+		Iterator iter;
+		ArrayList<D> sample;
+       
+		ScheduledIterator() {
+			iter = dataTable.entrySet().iterator();
+			sample = new ArrayList<D>();
+		}
+
+		public boolean hasNext() {
+			return iter.hasNext();
+		}
+
+		public Bucket next() {
+			boolean isHasNext = false;
+			while (iter.hasNext()) {
+				Map.Entry entry = (Map.Entry) iter.next();
+				Bucket bk = (Bucket) entry.getValue();
+				if (!bk.getDelta().equals(0)) {
+					return bk;
+				}// 过滤掉delta=0的顶点
+			}
+			return null;
+		}
+		D getThreshhold(){//获取优先级计算的阈值
+			int sampleSize=(int) (sampleLowerBound/partion);
+			int inter=dataTable.size()/sampleSize;//区间
+		    BaseIterator<K, V, D, E> iter=(BaseIterator<K, V, D, E>) getEntirePassIterator();
+		    Bucket<K, V, D, E> bk;
+		    int index=0;
+		    while(iter.hasNext()){
+				bk=iter.next();
+				if((++index%inter)==0){//每个inter的间隔取一次
+					sample.add(bk.getDelta());
+				}
+			}
+		    qksort(sample,0,sample.size()-1);// 对样本进行排序
+			D thresh = sample.get(sampleLowerBound);// 得到阈值
+			return thresh;
+		}
+		// 从大到小的顺序
+		 void qksort(ArrayList<D> data,int s,int t){
+			if(s<t){
+				int k=qkpass(data,s,t);
+			    qksort(data,s,k-1);
+			    qksort(data,k+1,t);
+			}
+		}
+		 int qkpass(ArrayList<D> data,int s,int t){
+			int i=s,j=t;
+			D value=data.get(i);
+			while(i<j){
+				while(i<j){
+					if(api.isGreater(value,data.get(j))){
+						data.add(i, data.get(j));
+						++i;
+						break;
+					}
+					--j;
+				}
+				while(i<j){
+					if(api.isGreater(data.get(i), value)){
+						data.add(j, data.get(i));
+						--j;
+						break;
+					}
+					++i;
+				}
+			}
+			data.add(i, value);
+			return i;
+		}
+		
+	}
+}
+
+

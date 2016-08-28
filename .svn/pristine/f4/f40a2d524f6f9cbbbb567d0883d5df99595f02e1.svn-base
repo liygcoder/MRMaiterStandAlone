@@ -1,0 +1,129 @@
+package core;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Scanner;
+import java.util.Vector;
+
+
+
+import util.TaskCheak;
+import util.TaskStart;
+
+import data.DataStructure;
+
+public class Worker<K,V,D,E> extends Thread{
+    int workerId;
+    ArrayList<DataStructure<K,V,D,E>> data;
+	String inputPath;
+    String outputPath;
+    TaskStart tStart;
+    TaskCheak tCheak;
+    MaiterKernel<K,V,D,E> kernel;
+    int workerNum;
+    GlobalVariable<K,V,D,E> globalVariable;
+    double partion;
+    double checkPeriod;
+	public Worker(int workerId,ArrayList<DataStructure<K,V,D,E>> data,GlobalInformation global,Helper<K, V, D, E> helper){
+		this.workerId = workerId;
+		this.data = data;
+		this.tStart = helper.tStart;
+		this.tCheak = helper.tCheak;
+		kernel = new MaiterKernel<K,V,D,E>(helper.api,data,workerId);
+		inputPath = global.inputPath;
+		outputPath = global.outputPath;
+		checkPeriod = global.snapshot;//ms进行一次
+		workerNum = global.workerNum;//worker的数量
+	    globalVariable=helper.globalVariable;
+		this.partion=global.partion;
+	}
+	
+	public void run(){//线程入口
+		//**检测kernel1 开始检测
+		try {
+			tStart.synchronous(1,workerId);
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		}
+		System.out.println("worker"+workerId+":I am reading the data");
+		if(!readDate()){System.out.println("读数据失败");System.exit(0);}
+		System.out.println("worker"+workerId+":I have read the data");
+		//**检测kernel1 结束检测
+		try {
+			tCheak.synchronous(1,workerId);
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		//showBuckets(); //for show the inputdata
+		
+		
+		//**检测kernel2开始检测
+		try {
+			tStart.synchronous(2,workerId);
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		}
+		System.out.println("worker"+workerId+":I am computing");
+		try {//进行迭代计算，并同时要进行检测 要周期性的去读WriteStart的值  如果是true则终止迭代计算
+            runLoop();
+		} catch (InterruptedException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		}
+
+		//**kernel3 开始
+		System.out.println("worker"+workerId+":I am writing the result");
+		if(!writeResult()){System.out.println("写数据有误");System.exit(0);}
+		System.out.println("I am worker"+workerId+":I have written the data");
+		//**kernel3 结束检测
+		try {
+			tCheak.synchronous(3,workerId);
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		System.out.println("worker"+workerId+" stopped！");
+	}
+
+	boolean readDate(){
+		inputPath = inputPath + workerId;
+		return (kernel.readDataKernel(inputPath));//调用kernel.read，将数据写入数据表中 
+	}	
+//	void showBuckets(){
+//		kernel.showBuckets();//数据显示 for test
+//	}
+
+	void runLoop() throws InterruptedException{
+		long lastCheckTime=0;
+		long currCheckTime = System.currentTimeMillis(); 
+		int step=0;
+		//for(;step<100;++step){
+		//while(true){step++;
+		for(step=1;step<=5;++step){
+		    System.out.println("worker="+workerId+"第"+step+"次迭代：");
+		    kernel.runLoop(partion);	
+			//showBuckets();System.out.println();
+			currCheckTime = System.currentTimeMillis(); 
+			if(Math.abs(currCheckTime-lastCheckTime)>=checkPeriod){
+				if(IteratorFinished.readIteratorFinished()){break;}   //终止kernel2 进行kernel3
+				estimate_prog();//对worker进行处理进度的评估,并将结果更新到master上
+				lastCheckTime = currCheckTime;
+			}
+		}
+	}
+	void estimate_prog() throws InterruptedException{
+		//对本地的 处理进度的评估 收集（master顶点的）value
+		D aggregationLocal = kernel.estimate_prog();//收集本地的sum of value
+		globalVariable.updateAggregation(workerId, aggregationLocal);//将本地的sum 更新到master中对应的变量上
+		System.out.println("worker_"+workerId+"的aggregationLocal="+aggregationLocal);
+	}
+    boolean writeResult() {
+		// 写结果
+    	outputPath = outputPath + (workerId-1);
+		return (kernel.writeResultKernel(outputPath));//调用kernel.read，将数据写入数据表中 
+	}
+	
+}

@@ -1,0 +1,3 @@
+参数：
+--runner Pagerank --workers 4  --snapshot_interval 1 --graph_dir /home/data/input/part --result_dir /home/data/result 
+--portion 1 --sampleLowerBound 10
