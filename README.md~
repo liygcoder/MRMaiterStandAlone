@@ -2,14 +2,13 @@ MRMaiterStandAlone
 =================================== 
 MRMaiterStandAlone简介
 -----------------------------------
-
-    MRMaiterStandAlone是基于DAIC计算模型，支持多副本顶点计算的图计算框架的一个单机版实现（具体实现机制请阅读PAGraph）。(分布式版本的MRMaiter是通过修改分布式图处理框架[Maiter](https://github.com/CodingCat/maiter/tree/master/Maiter)实现，在论文发表后将会对其开源。）
+		MRMaiterStandAlone是基于DAIC计算模型，支持多副本顶点计算的图计算框架的一个单机版实现（具体实现机制请阅读PAGraph）。(分布式版本的MRMaiter是通过修改分布式图处理框架[Maiter](https://github.com/CodingCat/maiter/tree/master/Maiter)实现，在论文发表后将会对其开源。）
 		MRMaiterStandAlone使用java语言编写，用多线程来模拟分布式集群，是对MRMaiter计算框架在运行机制上的一个模拟。
 
 
 MRMaiterStandalone API
 -----------------------------------
-		用户编写算法需继承MaiterAPI抽象类，实现相关方法：
+用户编写算法需继承MaiterAPI抽象类，实现相关方法：
 		readData：数据读取
 		initDelta：初始化顶点delta值
 		initValue:初始化顶点value值
@@ -25,7 +24,7 @@ MRMaiterStandalone API
 MRMaiterStandalone RUNNING：
 -----------------------------------
 ### Parameters：
-		--runner:运行的算法的名字
+--runner:运行的算法的名字
 		--workers：worker线程的数量
 		--snapshot_interval：计算过程中,终止检测周期
 		--portion：在一次遍历本地顶点计算中，顶点被调度进行计算的比例
